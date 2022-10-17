@@ -73,15 +73,6 @@ var tunnelCmd = &cobra.Command{
 			}
 		}
 
-		// Tunnel uses the k8s clientset to query the API server for services in the LoadBalancerEmulator.
-		// We define the tunnel and minikube error free if the API server responds within a second.
-		// This also contributes to better UX, the tunnel status check can happen every second and
-		// doesn't hang on the API server call during startup and shutdown time or if there is a temporary error.
-		clientset, err := kapi.Client(cname)
-		if err != nil {
-			exit.Error(reason.InternalKubernetesClient, "error creating clientset", err)
-		}
-
 		ctrlC := make(chan os.Signal, 1)
 		signal.Notify(ctrlC, os.Interrupt)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -90,30 +81,43 @@ var tunnelCmd = &cobra.Command{
 			cancel()
 		}()
 
-		if driver.NeedsPortForward(co.Config.Driver) || bindAddress != "" {
-			port, err := oci.ForwardedPort(co.Config.Driver, cname, 22)
-			if err != nil {
-				exit.Error(reason.DrvPortForward, "error getting ssh port", err)
-			}
-			sshPort := strconv.Itoa(port)
-			sshKey := filepath.Join(localpath.MiniPath(), "machines", cname, "id_rsa")
+		startTunnel(ctx, cname, co, manager)
+	},
+}
 
-			outputTunnelStarted()
-			kicSSHTunnel := kic.NewSSHTunnel(ctx, sshPort, sshKey, bindAddress, clientset.CoreV1(), clientset.NetworkingV1())
-			err = kicSSHTunnel.Start()
-			if err != nil {
-				exit.Error(reason.SvcTunnelStart, "error starting tunnel", err)
-			}
+func startTunnel(ctx context.Context, cname string, co mustload.ClusterController, manager *tunnel.Manager) {
+	// Tunnel uses the k8s clientset to query the API server for services in the LoadBalancerEmulator.
+	// We define the tunnel and minikube error free if the API server responds within a second.
+	// This also contributes to better UX, the tunnel status check can happen every second and
+	// doesn't hang on the API server call during startup and shutdown time or if there is a temporary error.
+	clientset, err := kapi.Client(cname)
+	if err != nil {
+		exit.Error(reason.InternalKubernetesClient, "error creating clientset", err)
+	}
 
-			return
+	if driver.NeedsPortForward(co.Config.Driver) || bindAddress != "" {
+		port, err := oci.ForwardedPort(co.Config.Driver, cname, 22)
+		if err != nil {
+			exit.Error(reason.DrvPortForward, "error getting ssh port", err)
 		}
+		sshPort := strconv.Itoa(port)
+		sshKey := filepath.Join(localpath.MiniPath(), "machines", cname, "id_rsa")
 
-		done, err := manager.StartTunnel(ctx, cname, co.API, config.DefaultLoader, clientset.CoreV1())
+		outputTunnelStarted()
+		kicSSHTunnel := kic.NewSSHTunnel(ctx, sshPort, sshKey, bindAddress, clientset.CoreV1(), clientset.NetworkingV1())
+		err = kicSSHTunnel.Start()
 		if err != nil {
 			exit.Error(reason.SvcTunnelStart, "error starting tunnel", err)
 		}
-		<-done
-	},
+
+		return
+	}
+
+	done, err := manager.StartTunnel(ctx, cname, co.API, config.DefaultLoader, clientset.CoreV1())
+	if err != nil {
+		exit.Error(reason.SvcTunnelStart, "error starting tunnel", err)
+	}
+	<-done
 }
 
 func outputTunnelStarted() {

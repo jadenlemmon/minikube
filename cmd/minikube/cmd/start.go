@@ -71,6 +71,7 @@ import (
 	"k8s.io/minikube/pkg/minikube/pause"
 	"k8s.io/minikube/pkg/minikube/reason"
 	"k8s.io/minikube/pkg/minikube/style"
+	"k8s.io/minikube/pkg/minikube/tunnel"
 	pkgtrace "k8s.io/minikube/pkg/trace"
 
 	"k8s.io/minikube/pkg/minikube/registry"
@@ -274,6 +275,14 @@ func runStart(cmd *cobra.Command, args []string) {
 
 	if err := showKubectlInfo(kubeconfig, starter.Node.KubernetesVersion, starter.Node.ContainerRuntime, starter.Cfg.Name); err != nil {
 		klog.Errorf("kubectl info: %v", err)
+	}
+
+	// If the user requested a background tunnel
+	if viper.GetBool(withTunnel) {
+		klog.Info("Starting tunnel...")
+		co := mustload.Healthy(ClusterFlagValue())
+		manager := tunnel.NewManager()
+		startTunnel(ctx, ClusterFlagValue(), co, manager)
 	}
 }
 

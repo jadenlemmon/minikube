@@ -140,6 +140,7 @@ const (
 	qemuFirmwarePath        = "qemu-firmware-path"
 	socketVMnetClientPath   = "socket-vmnet-client-path"
 	socketVMnetPath         = "socket-vmnet-path"
+	withTunnel              = "tunnel"
 )
 
 var (
@@ -200,6 +201,7 @@ func initMinikubeFlags() {
 	startCmd.Flags().String(binaryMirror, "", "Location to fetch kubectl, kubelet, & kubeadm binaries from.")
 	startCmd.Flags().Bool(disableOptimizations, false, "If set, disables optimizations that are set for local Kubernetes. Including decreasing CoreDNS replicas from 2 to 1. Defaults to false.")
 	startCmd.Flags().Bool(disableMetrics, false, "If set, disables metrics reporting (CPU and memory usage), this can improve CPU usage. Defaults to false.")
+	startCmd.Flags().Bool(withTunnel, false, "If set, minikube will start a background tunnel")
 }
 
 // initKubernetesFlags inits the commandline flags for Kubernetes related options
