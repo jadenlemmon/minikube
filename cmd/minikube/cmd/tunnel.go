@@ -100,6 +100,7 @@ func StartTunnel(cname string, cleanup bool, bindAddress string, daemon bool) {
 
 	// Start the rest of the process with a daemon if flag is on
 	if daemon {
+		out.Styled(style.Success, "Started Tunnel in Background")
 		if err := daemonize.Daemonize(cname, "tunnel"); err != nil {
 			exit.Error(reason.SvcTunnelStart, "error starting tunnel daemon", err)
 		}

@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/viper"
 	"k8s.io/klog/v2"
 	"k8s.io/minikube/pkg/minikube/config"
+	"k8s.io/minikube/pkg/minikube/daemonize"
 	"k8s.io/minikube/pkg/minikube/exit"
 	"k8s.io/minikube/pkg/minikube/kubeconfig"
 	"k8s.io/minikube/pkg/minikube/localpath"
@@ -132,6 +133,10 @@ func stopProfile(profile string) int {
 
 	if err := killMountProcess(); err != nil {
 		out.WarningT("Unable to kill mount process: {{.error}}", out.V{"error": err})
+	}
+
+	if err := daemonize.StopDaemonize(profile, "tunnel"); err != nil {
+		out.WarningT("Unable to kill tunnel process: {{.error}}", out.V{"error": err})
 	}
 
 	for _, n := range cc.Nodes {

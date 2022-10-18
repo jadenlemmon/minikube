@@ -30,3 +30,14 @@ func Daemonize(profile string, pidName string) error {
 
 	return nil
 }
+
+func StopDaemonize(profile string, pidName string) error {
+	daemon := NewDaemon(profile, pidName)
+
+	err := daemon.kill()
+	if err != nil {
+		return errors.Wrap(err, "killing daemon")
+	}
+
+	return nil
+}

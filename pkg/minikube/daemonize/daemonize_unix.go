@@ -35,7 +35,7 @@ type Daemon struct {
 	PidFilePath string
 }
 
-func (d *Daemon) killExisting() error {
+func (d *Daemon) kill() error {
 	f, err := os.ReadFile(d.PidFilePath)
 	if os.IsNotExist(err) {
 		return nil
@@ -64,7 +64,7 @@ func (d *Daemon) killExisting() error {
 }
 
 func (d *Daemon) start() error {
-	if err := d.killExisting(); err != nil {
+	if err := d.kill(); err != nil {
 		return errors.Wrap(err, "daemonizing")
 	}
 
