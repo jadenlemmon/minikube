@@ -16,50 +16,37 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package schedule
+package daemonize
 
 import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/VividCortex/godaemon"
 	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
-	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/minikube/localpath"
-	"k8s.io/minikube/pkg/minikube/mustload"
 )
 
-// KillExisting kills existing scheduled stops by looking up the PID
-// of the scheduled stop from the PID file saved for the profile and killing the process
-func KillExisting(profiles []string) {
-	for _, profile := range profiles {
-		if err := killPIDForProfile(profile); err != nil {
-			klog.Warningf("error killng PID for profile %s: %v", profile, err)
-		}
-		_, cc := mustload.Partial(profile)
-		cc.ScheduledStop = nil
-		if err := config.SaveProfile(profile, cc); err != nil {
-			klog.Errorf("error saving profile for profile %s: %v", profile, err)
-		}
-	}
+type Daemon struct {
+	Profile     string
+	PidFileName string
+	PidFilePath string
 }
 
-func killPIDForProfile(profile string) error {
-	file := localpath.PID(profile, "pid")
-	f, err := os.ReadFile(file)
+func (d *Daemon) killExisting() error {
+	f, err := os.ReadFile(d.PidFilePath)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	defer func() {
-		if err := os.Remove(file); err != nil {
-			klog.Errorf("error deleting %s: %v, you may have to delete in manually", file, err)
+		if err := os.Remove(d.PidFilePath); err != nil {
+			klog.Errorf("error deleting %s: %v, you may have to delete in manually", d.PidFilePath, err)
 		}
 	}()
 	if err != nil {
-		return errors.Wrapf(err, "reading %s", file)
+		return errors.Wrapf(err, "reading %s", d.PidFilePath)
 	}
 	pid, err := strconv.Atoi(string(f))
 	if err != nil {
@@ -69,29 +56,43 @@ func killPIDForProfile(profile string) error {
 	if err != nil {
 		return errors.Wrap(err, "finding process")
 	}
-	klog.Infof("killing process %v as it is an old scheduled stop", pid)
+	klog.Infof("killing process %v as it is an old process", pid)
 	if err := p.Kill(); err != nil {
 		return errors.Wrapf(err, "killing %v", pid)
 	}
 	return nil
 }
 
-func daemonize(profiles []string, duration time.Duration) error {
+func (d *Daemon) start() error {
+	if err := d.killExisting(); err != nil {
+		return errors.Wrap(err, "daemonizing")
+	}
+
 	_, _, err := godaemon.MakeDaemon(&godaemon.DaemonAttr{})
 	if err != nil {
 		return err
 	}
+
 	// now that this process has daemonized, it has a new PID
 	pid := os.Getpid()
-	return savePIDs(pid, profiles)
+
+	if err := os.WriteFile(d.PidFilePath, []byte(fmt.Sprintf("%v", pid)), 0600); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func savePIDs(pid int, profiles []string) error {
-	for _, p := range profiles {
-		file := localpath.PID(p, "pid")
-		if err := os.WriteFile(file, []byte(fmt.Sprintf("%v", pid)), 0600); err != nil {
-			return err
-		}
+func NewDaemon(profile string, pidName string) *Daemon {
+	pidFileName := fmt.Sprintf("%v.pid", pidName)
+
+	pidFilePath := localpath.PID(profile, pidFileName)
+
+	daemon := Daemon{
+		PidFileName: pidFileName,
+		Profile:     profile,
+		PidFilePath: pidFilePath,
 	}
-	return nil
+
+	return &daemon
 }

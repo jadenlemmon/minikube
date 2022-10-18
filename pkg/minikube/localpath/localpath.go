@@ -100,8 +100,9 @@ func ClientCert(name string) string {
 }
 
 // PID returns the path to the pid file used by profile for scheduled stop
-func PID(profile string) string {
-	return path.Join(Profile(profile), "pid")
+// or for running the tunnel command as a daemon
+func PID(profile string, file string) string {
+	return path.Join(Profile(profile), file)
 }
 
 // ClientKey returns client certificate path, used by kubeconfig

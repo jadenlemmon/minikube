@@ -275,6 +275,10 @@ func runStart(cmd *cobra.Command, args []string) {
 	if err := showKubectlInfo(kubeconfig, starter.Node.KubernetesVersion, starter.Node.ContainerRuntime, starter.Cfg.Name); err != nil {
 		klog.Errorf("kubectl info: %v", err)
 	}
+
+	if viper.GetBool(startTunnel) {
+		StartTunnel(ClusterFlagValue(), true, "", true)
+	}
 }
 
 func provisionWithDriver(cmd *cobra.Command, ds registry.DriverState, existing *config.ClusterConfig) (node.Starter, error) {
