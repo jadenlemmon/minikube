@@ -18,12 +18,14 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 
+	"github.com/VividCortex/godaemon"
 	"github.com/spf13/cobra"
 
 	"k8s.io/klog/v2"
@@ -43,6 +45,7 @@ import (
 )
 
 var cleanup bool
+var dameon bool
 var bindAddress string
 
 // tunnelCmd represents the tunnel command
@@ -80,6 +83,44 @@ var tunnelCmd = &cobra.Command{
 			<-ctrlC
 			cancel()
 		}()
+
+		f, err := os.OpenFile("testlogfile123", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			klog.Fatalf("error opening file: %v", err)
+		}
+		defer f.Close()
+
+		klog.SetOutput(f)
+
+		if dameon {
+			file := "/Users/jadenlemmon/Code/Kubernetes/minikube/tunnelpid"
+
+			if godaemon.Stage() == godaemon.StageParent {
+				file, err := os.ReadFile(file)
+				if !os.IsNotExist(err) {
+					pid, err := strconv.Atoi(string(file))
+					if err != nil {
+						panic(err)
+					}
+
+					p, err := os.FindProcess(pid)
+					if err != nil {
+						klog.Fatalf("error finding process: %v", err)
+					}
+
+					if err := p.Kill(); err != nil {
+						klog.Fatalf("error killing process: %v", err)
+					}
+				}
+			}
+
+			godaemon.MakeDaemon(&godaemon.DaemonAttr{ProgramName: "jadenminikube"})
+			pid := os.Getpid()
+
+			if err := os.WriteFile(file, []byte(fmt.Sprintf("%v", pid)), 0600); err != nil {
+				klog.Fatalf("error writing file: %v", err)
+			}
+		}
 
 		startTunnel(ctx, cname, co, manager)
 	},
@@ -129,5 +170,6 @@ func outputTunnelStarted() {
 
 func init() {
 	tunnelCmd.Flags().BoolVarP(&cleanup, "cleanup", "c", true, "call with cleanup=true to remove old tunnels")
+	tunnelCmd.Flags().BoolVarP(&dameon, "dameon", "d", false, "run tunnel as a daemon")
 	tunnelCmd.Flags().StringVar(&bindAddress, "bind-address", "", "set tunnel bind address, empty or '*' indicates the tunnel should be available for all interfaces")
 }
