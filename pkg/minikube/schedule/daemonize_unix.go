@@ -48,7 +48,7 @@ func KillExisting(profiles []string) {
 }
 
 func killPIDForProfile(profile string) error {
-	file := localpath.PID(profile)
+	file := localpath.PID(profile, "pid")
 	f, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
 		return nil
@@ -88,7 +88,7 @@ func daemonize(profiles []string, _ time.Duration) error {
 
 func savePIDs(pid int, profiles []string) error {
 	for _, p := range profiles {
-		file := localpath.PID(p)
+		file := localpath.PID(p, "pid")
 		if err := os.WriteFile(file, []byte(fmt.Sprintf("%v", pid)), 0600); err != nil {
 			return err
 		}
