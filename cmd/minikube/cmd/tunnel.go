@@ -82,6 +82,8 @@ var tunnelCmd = &cobra.Command{
 			mustLockOrExit(tunnelLockPath)
 			cleanupLock()
 
+			out.Styled(style.Notice, "Tunnel starting in daemon mode, use `minikube tunnel --stop-daemon` to stop")
+
 			_, _, err := godaemon.MakeDaemon(&godaemon.DaemonAttr{})
 			if err != nil {
 				exit.Error(reason.SvcTunnelStart, "error starting tunnel daemon", err)
@@ -201,6 +203,10 @@ func stopTunnelDaemon(tunnelLockPath string) error {
 
 	err = process.Signal(syscall.SIGTERM)
 	if err != nil {
+		if err.Error() == "os: process already finished" || err.Error() == "no such process" {
+			// Process has already exited
+			return nil
+		}
 		return errors.Wrap(err, "error sending SIGTERM to background tunnel process")
 	}
 
