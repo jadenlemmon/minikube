@@ -30,9 +30,6 @@ tests the registry addon
 #### validateMetricsServerAddon
 tests the metrics server addon by making sure "kubectl top pods" returns a sensible result
 
-#### validateHelmTillerAddon
-tests the helm tiller addon by running "helm version" inside the cluster
-
 #### validateOlmAddon
 tests the OLM addon
 
@@ -52,6 +49,9 @@ tests the inspektor-gadget addon by ensuring the pod has come up and addon disab
 
 #### validateCloudSpannerAddon
 tests the cloud-spanner addon by ensuring the deployment and pod come up and addon disables
+
+#### validateVolcanoAddon
+tests the Volcano addon, makes sure the Volcano is installed into cluster.
 
 #### validateLocalPathAddon
 tests the functionality of the storage-provisioner-rancher addon
@@ -466,7 +466,7 @@ verifies files and packages installed inside minikube ISO/Base image
 ## TestGvisorAddon
 tests the functionality of the gVisor addon
 
-## TestMutliControlPlane
+## TestMultiControlPlane
 tests all ha (multi-control plane) cluster functionality
 
 #### validateHAStartCluster

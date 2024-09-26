@@ -94,7 +94,7 @@ var hostAndDirsDeleter = func(api libmachine.API, cc *config.ClusterConfig, prof
 	if err := killMountProcess(); err != nil {
 		out.FailureT("Failed to kill mount process: {{.error}}", out.V{"error": err})
 	}
-	if err := sshagent.Stop(profileName); err != nil {
+	if err := sshagent.Stop(profileName); err != nil && !config.IsNotExist(err) {
 		out.FailureT("Failed to stop ssh-agent process: {{.error}}", out.V{"error": err})
 	}
 
@@ -642,7 +642,7 @@ func killProcess(path string) error {
 		// if multiple errors were encountered, combine them into a single error
 		out.Styled(style.Failure, "Multiple errors encountered:")
 		for _, e := range errs {
-			out.Err("%v\n", e)
+			out.Errf("%v\n", e)
 		}
 		return errors.New("multiple errors encountered while closing mount processes")
 	}

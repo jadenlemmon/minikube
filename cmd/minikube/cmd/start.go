@@ -1365,7 +1365,7 @@ func validateFlags(cmd *cobra.Command, drvName string) { //nolint:gocyclo
 	validateInsecureRegistry()
 }
 
-// validatePorts validates that the --ports are not below 1024 for the host and not outside range
+// validatePorts validates that the --ports are not outside range
 func validatePorts(ports []string) error {
 	var exposedPorts, hostPorts, portSpecs []string
 	for _, p := range ports {
@@ -1386,28 +1386,25 @@ func validatePorts(ports []string) error {
 		}
 	}
 	for _, p := range exposedPorts {
-		if err := validatePort(p, false); err != nil {
+		if err := validatePort(p); err != nil {
 			return err
 		}
 	}
 	for _, p := range hostPorts {
-		if err := validatePort(p, true); err != nil {
+		if err := validatePort(p); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validatePort(port string, isHost bool) error {
+func validatePort(port string) error {
 	p, err := strconv.Atoi(port)
 	if err != nil {
 		return errors.Errorf("Sorry, one of the ports provided with --ports flag is not valid: %s", port)
 	}
 	if p > 65535 || p < 1 {
 		return errors.Errorf("Sorry, one of the ports provided with --ports flag is outside range: %s", port)
-	}
-	if isHost && detect.IsMicrosoftWSL() && p < 1024 {
-		return errors.Errorf("Sorry, you cannot use privileged ports on the host (below 1024): %s", port)
 	}
 	return nil
 }
@@ -1596,7 +1593,7 @@ func validateRegistryMirror() {
 // args match the format of registry.cn-hangzhou.aliyuncs.com/google_containers
 // also "<hostname>[:<port>]"
 func validateImageRepository(imageRepo string) (validImageRepo string) {
-	expression := regexp.MustCompile(`^(?:(\w+)\:\/\/)?([-a-zA-Z0-9]{1,}(?:\.[-a-zA-Z]{1,}){0,})(?:\:(\d+))?(\/.*)?$`)
+	expression := regexp.MustCompile(`^(?:(\w+)\:\/\/)?([-a-zA-Z0-9]{1,}(?:\.[-a-zA-Z0-9]{1,}){0,})(?:\:(\d+))?(\/.*)?$`)
 
 	if strings.ToLower(imageRepo) == "auto" {
 		imageRepo = "auto"
@@ -1925,7 +1922,7 @@ func validateDockerStorageDriver(drvName string) {
 		viper.Set(preload, false)
 		return
 	}
-	if si.StorageDriver == "overlay2" {
+	if si.StorageDriver == "overlay2" || si.StorageDriver == "overlayfs" {
 		return
 	}
 	out.WarningT("{{.Driver}} is currently using the {{.StorageDriver}} storage driver, setting preload=false", out.V{"StorageDriver": si.StorageDriver, "Driver": drvName})

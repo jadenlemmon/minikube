@@ -30,13 +30,13 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/minikube/cmd/minikube/cmd"
+	"k8s.io/minikube/pkg/minikube/cluster"
 	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/util/retry"
 )
 
-// TestMutliControlPlane tests all ha (multi-control plane) cluster functionality
-func TestMutliControlPlane(t *testing.T) {
+// TestMultiControlPlane tests all ha (multi-control plane) cluster functionality
+func TestMultiControlPlane(t *testing.T) {
 	if NoneDriver() {
 		t.Skip("none driver does not support multinode/ha(multi-control plane) cluster")
 	}
@@ -140,17 +140,17 @@ func validateHADeployApp(ctx context.Context, t *testing.T, profile string) {
 		rr, err := Run(t, exec.CommandContext(ctx, Target(), "kubectl", "-p", profile, "--", "get", "pods", "-o", "jsonpath='{.items[*].status.podIP}'"))
 		if err != nil {
 			err := fmt.Errorf("failed to retrieve Pod IPs (may be temporary): %v", err)
-			t.Logf(err.Error())
+			t.Log(err.Error())
 			return err
 		}
 		podIPs := strings.Split(strings.Trim(rr.Stdout.String(), "'"), " ")
 		if len(podIPs) != 3 {
 			err := fmt.Errorf("expected 3 Pod IPs but got %d (may be temporary), output: %q", len(podIPs), rr.Output())
-			t.Logf(err.Error())
+			t.Log(err.Error())
 			return err
 		} else if podIPs[0] == podIPs[1] || podIPs[0] == podIPs[2] || podIPs[1] == podIPs[2] {
 			err := fmt.Errorf("expected 3 different pod IPs but got %s and %s (may be temporary), output: %q", podIPs[0], podIPs[1], rr.Output())
-			t.Logf(err.Error())
+			t.Log(err.Error())
 			return err
 		}
 		return nil
@@ -328,7 +328,7 @@ func validateHACopyFile(ctx context.Context, t *testing.T, profile string) {
 		t.Fatalf("failed to run minikube status. args %q : %v", rr.Command(), err)
 	}
 
-	var statuses []cmd.Status
+	var statuses []cluster.Status
 	if err = json.Unmarshal(rr.Stdout.Bytes(), &statuses); err != nil {
 		t.Errorf("failed to decode json from status: args %q: %v", rr.Command(), err)
 	}
@@ -419,7 +419,7 @@ func validateHARestartSecondaryNode(ctx context.Context, t *testing.T, profile s
 	// start stopped node(s) back up
 	rr, err := Run(t, exec.CommandContext(ctx, Target(), "-p", profile, "node", "start", SecondNodeName, "-v=7", "--alsologtostderr"))
 	if err != nil {
-		t.Logf(rr.Stderr.String())
+		t.Log(rr.Stderr.String())
 		t.Errorf("secondary control-plane node start returned an error. args %q: %v", rr.Command(), err)
 	}
 

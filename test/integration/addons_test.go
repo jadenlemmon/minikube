@@ -32,6 +32,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -99,12 +100,9 @@ func TestAddons(t *testing.T) {
 		// so we override that here to let minikube auto-detect appropriate cgroup driver
 		os.Setenv(constants.MinikubeForceSystemdEnv, "")
 
-		args := append([]string{"start", "-p", profile, "--wait=true", "--memory=4000", "--alsologtostderr", "--addons=registry", "--addons=metrics-server", "--addons=volumesnapshots", "--addons=csi-hostpath-driver", "--addons=gcp-auth", "--addons=cloud-spanner", "--addons=inspektor-gadget", "--addons=storage-provisioner-rancher", "--addons=nvidia-device-plugin", "--addons=yakd"}, StartArgs()...)
+		args := append([]string{"start", "-p", profile, "--wait=true", "--memory=4000", "--alsologtostderr", "--addons=registry", "--addons=metrics-server", "--addons=volumesnapshots", "--addons=csi-hostpath-driver", "--addons=gcp-auth", "--addons=cloud-spanner", "--addons=inspektor-gadget", "--addons=storage-provisioner-rancher", "--addons=nvidia-device-plugin", "--addons=yakd", "--addons=volcano"}, StartArgs()...)
 		if !NoneDriver() { // none driver does not support ingress
 			args = append(args, "--addons=ingress", "--addons=ingress-dns")
-		}
-		if !arm64Platform() {
-			args = append(args, "--addons=helm-tiller")
 		}
 		rr, err := Run(t, exec.CommandContext(ctx, Target(), args...))
 		if err != nil {
@@ -117,6 +115,26 @@ func TestAddons(t *testing.T) {
 		t.Fatalf("Failed setup for addon tests")
 	}
 
+	// Run tests in serial to avoid collision
+	t.Run("serial", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			validator validateFunc
+		}{
+			{"Volcano", validateVolcanoAddon},
+			{"GCPAuth", validateGCPAuthAddon},
+		}
+		for _, tc := range tests {
+			tc := tc
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatalf("Unable to run more tests (deadline exceeded)")
+			}
+			t.Run(tc.name, func(t *testing.T) {
+				tc.validator(ctx, t, profile)
+			})
+		}
+	})
+
 	// Parallelized tests
 	t.Run("parallel", func(t *testing.T) {
 		tests := []struct {
@@ -127,7 +145,6 @@ func TestAddons(t *testing.T) {
 			{"Ingress", validateIngressAddon},
 			{"InspektorGadget", validateInspektorGadgetAddon},
 			{"MetricsServer", validateMetricsServerAddon},
-			{"HelmTiller", validateHelmTillerAddon},
 			{"Olm", validateOlmAddon},
 			{"CSI", validateCSIDriverAndSnapshots},
 			{"Headlamp", validateHeadlampAddon},
@@ -143,25 +160,6 @@ func TestAddons(t *testing.T) {
 			}
 			t.Run(tc.name, func(t *testing.T) {
 				MaybeParallel(t)
-				tc.validator(ctx, t, profile)
-			})
-		}
-	})
-
-	// Run other tests after to avoid collision
-	t.Run("serial", func(t *testing.T) {
-		tests := []struct {
-			name      string
-			validator validateFunc
-		}{
-			{"GCPAuth", validateGCPAuthAddon},
-		}
-		for _, tc := range tests {
-			tc := tc
-			if ctx.Err() == context.DeadlineExceeded {
-				t.Fatalf("Unable to run more tests (deadline exceeded)")
-			}
-			t.Run(tc.name, func(t *testing.T) {
 				tc.validator(ctx, t, profile)
 			})
 		}
@@ -324,8 +322,8 @@ func validateRegistryAddon(ctx context.Context, t *testing.T, profile string) {
 	}
 
 	start := time.Now()
-	if err := kapi.WaitForRCToStabilize(client, "kube-system", "registry", Minutes(6)); err != nil {
-		t.Errorf("failed waiting for registry replicacontroller to stabilize: %v", err)
+	if err := kapi.WaitForDeploymentToStabilize(client, "kube-system", "registry", Minutes(6)); err != nil {
+		t.Errorf("failed waiting for registry deployment to stabilize: %v", err)
 	}
 	t.Logf("registry stabilized in %s", time.Since(start))
 
@@ -435,64 +433,6 @@ func validateMetricsServerAddon(ctx context.Context, t *testing.T, profile strin
 	}
 }
 
-// validateHelmTillerAddon tests the helm tiller addon by running "helm version" inside the cluster
-func validateHelmTillerAddon(ctx context.Context, t *testing.T, profile string) {
-
-	defer PostMortemLogs(t, profile)
-
-	if arm64Platform() {
-		t.Skip("skip Helm test on arm64")
-	}
-
-	client, err := kapi.Client(profile)
-	if err != nil {
-		t.Fatalf("failed to get Kubernetes client for %s: %v", profile, err)
-	}
-
-	start := time.Now()
-	if err := kapi.WaitForDeploymentToStabilize(client, "kube-system", "tiller-deploy", Minutes(6)); err != nil {
-		t.Errorf("failed waiting for tiller-deploy deployment to stabilize: %v", err)
-	}
-	t.Logf("tiller-deploy stabilized in %s", time.Since(start))
-
-	if _, err := PodWait(ctx, t, profile, "kube-system", "app=helm", Minutes(6)); err != nil {
-		t.Fatalf("failed waiting for helm pod: %v", err)
-	}
-
-	if NoneDriver() {
-		_, err := exec.LookPath("socat")
-		if err != nil {
-			t.Skipf("socat is required by kubectl to complete this test")
-		}
-	}
-
-	want := "Server: &version.Version"
-	// Test from inside the cluster (`helm version` use pod.list permission.)
-	checkHelmTiller := func() error {
-
-		rr, err := Run(t, exec.CommandContext(ctx, "kubectl", "--context", profile, "run", "--rm", "helm-test", "--restart=Never", "--image=docker.io/alpine/helm:2.16.3", "-it", "--namespace=kube-system", "--", "version"))
-		if err != nil {
-			return err
-		}
-		if rr.Stderr.String() != "" {
-			t.Logf("%v: unexpected stderr: %s", rr.Command(), rr.Stderr)
-		}
-		if !strings.Contains(rr.Stdout.String(), want) {
-			return fmt.Errorf("%v stdout = %q, want %q", rr.Command(), rr.Stdout, want)
-		}
-		return nil
-	}
-
-	if err := retry.Expo(checkHelmTiller, 500*time.Millisecond, Minutes(2)); err != nil {
-		t.Errorf("failed checking helm tiller: %v", err.Error())
-	}
-
-	rr, err := Run(t, exec.CommandContext(ctx, Target(), "-p", profile, "addons", "disable", "helm-tiller", "--alsologtostderr", "-v=1"))
-	if err != nil {
-		t.Errorf("failed disabling helm-tiller addon. arg %q.s %v", rr.Command(), err)
-	}
-}
-
 // validateOlmAddon tests the OLM addon
 func validateOlmAddon(ctx context.Context, t *testing.T, profile string) {
 	t.Skip("Skipping OLM addon test until https://github.com/operator-framework/operator-lifecycle-manager/issues/2534 is resolved")
@@ -542,6 +482,10 @@ func validateOlmAddon(ctx context.Context, t *testing.T, profile string) {
 	// Operator installation takes a while
 	if err := retry.Expo(checkOperatorInstalled, time.Second*3, Minutes(10)); err != nil {
 		t.Errorf("failed checking operator installed: %v", err.Error())
+	}
+
+	if rr, err := Run(t, exec.CommandContext(ctx, Target(), "-p", profile, "addons", "disable", "olm", "--alsologtostderr", "-v=1")); err != nil {
+		t.Errorf("failed to disable olm addon: args %q: %v", rr.Command(), err)
 	}
 }
 
@@ -829,6 +773,10 @@ func validateHeadlampAddon(ctx context.Context, t *testing.T, profile string) {
 	if _, err := PodWait(ctx, t, profile, "headlamp", "app.kubernetes.io/name=headlamp", Minutes(8)); err != nil {
 		t.Fatalf("failed waiting for headlamp pod: %v", err)
 	}
+
+	if rr, err := Run(t, exec.CommandContext(ctx, Target(), "-p", profile, "addons", "disable", "headlamp", "--alsologtostderr", "-v=1")); err != nil {
+		t.Errorf("failed to disable headlamp addon: args %q: %v", rr.Command(), err)
+	}
 }
 
 // validateInspektorGadgetAddon tests the inspektor-gadget addon by ensuring the pod has come up and addon disables
@@ -859,6 +807,105 @@ func validateCloudSpannerAddon(ctx context.Context, t *testing.T, profile string
 	}
 	if rr, err := Run(t, exec.CommandContext(ctx, Target(), "addons", "disable", "cloud-spanner", "-p", profile)); err != nil {
 		t.Errorf("failed to disable cloud-spanner addon: args %q : %v", rr.Command(), err)
+	}
+}
+
+// validateVolcanoAddon tests the Volcano addon, makes sure the Volcano is installed into cluster.
+func validateVolcanoAddon(ctx context.Context, t *testing.T, profile string) {
+	defer PostMortemLogs(t, profile)
+	if ContainerRuntime() == "crio" {
+		t.Skipf("skipping: crio not supported")
+	}
+
+	volcanoNamespace := "volcano-system"
+
+	client, err := kapi.Client(profile)
+	if err != nil {
+		t.Fatalf("failed to get Kubernetes client for %s: %v", profile, err)
+	}
+
+	// Wait for the volcano component installation to complete
+	start := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		if err := kapi.WaitForDeploymentToStabilize(client, volcanoNamespace, "volcano-scheduler", Minutes(6)); err != nil {
+			t.Errorf("failed waiting for volcano-scheduler deployment to stabilize: %v", err)
+		} else {
+			t.Logf("volcano-scheduler stabilized in %s", time.Since(start))
+		}
+		wg.Done()
+	}()
+	go func() {
+		if err := kapi.WaitForDeploymentToStabilize(client, volcanoNamespace, "volcano-admission", Minutes(6)); err != nil {
+			t.Errorf("failed waiting for volcano-admission deployment to stabilize: %v", err)
+		} else {
+			t.Logf("volcano-admission stabilized in %s", time.Since(start))
+		}
+		wg.Done()
+	}()
+	go func() {
+		if err := kapi.WaitForDeploymentToStabilize(client, volcanoNamespace, "volcano-controllers", Minutes(6)); err != nil {
+			t.Errorf("failed waiting for volcano-controller deployment to stabilize: %v", err)
+		} else {
+			t.Logf("volcano-controller stabilized in %s", time.Since(start))
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+
+	if _, err := PodWait(ctx, t, profile, volcanoNamespace, "app=volcano-scheduler", Minutes(6)); err != nil {
+		t.Fatalf("failed waiting for app=volcano-scheduler pod: %v", err)
+	}
+
+	if _, err := PodWait(ctx, t, profile, volcanoNamespace, "app=volcano-admission", Minutes(6)); err != nil {
+		t.Fatalf("failed waiting for app=volcano-admission pod: %v", err)
+	}
+
+	if _, err := PodWait(ctx, t, profile, volcanoNamespace, "app=volcano-controller", Minutes(6)); err != nil {
+		t.Fatalf("failed waiting for app=volcano-controller pod: %v", err)
+	}
+
+	// When the volcano deployment is complete, delete the volcano-admission-init job, it will affect the tests
+	rr, err := Run(t, exec.CommandContext(ctx, "kubectl", "--context", profile, "delete", "-n", volcanoNamespace, "job", "volcano-admission-init"))
+	if err != nil {
+		t.Logf("vcjob creation with %s failed: %v", rr.Command(), err)
+	}
+
+	// Create a vcjob
+	rr, err = Run(t, exec.CommandContext(ctx, "kubectl", "--context", profile, "create", "-f", filepath.Join(*testdataDir, "vcjob.yaml")))
+	if err != nil {
+		t.Logf("vcjob creation with %s failed: %v", rr.Command(), err)
+	}
+
+	want := "test-job"
+	checkVolcano := func() error {
+		// check the vcjob
+		rr, err := Run(t, exec.CommandContext(ctx, "kubectl", "--context", profile, "get", "vcjob", "-n", "my-volcano"))
+		if err != nil {
+			return err
+		}
+		if rr.Stderr.String() != "" {
+			t.Logf("%v: unexpected stderr: %s", rr.Command(), rr.Stderr)
+		}
+		if !strings.Contains(rr.Stdout.String(), want) {
+			return fmt.Errorf("%v stdout = %q, want %q", rr.Command(), rr.Stdout, want)
+		}
+		return nil
+	}
+
+	if err := retry.Expo(checkVolcano, time.Second*3, Minutes(2)); err != nil {
+		t.Errorf("failed checking volcano: %v", err.Error())
+	}
+
+	// also ensure the job is actually running
+	if _, err := PodWait(ctx, t, profile, "my-volcano", "volcano.sh/job-name=test-job", Minutes(3)); err != nil {
+		t.Fatalf("failed waiting for test-local-path pod: %v", err)
+	}
+
+	rr, err = Run(t, exec.CommandContext(ctx, Target(), "-p", profile, "addons", "disable", "volcano", "--alsologtostderr", "-v=1"))
+	if err != nil {
+		t.Errorf("failed to disable volcano addon: args %q: %v", rr.Command(), err)
 	}
 }
 
@@ -962,5 +1009,9 @@ func validateYakdAddon(ctx context.Context, t *testing.T, profile string) {
 
 	if _, err := PodWait(ctx, t, profile, "yakd-dashboard", "app.kubernetes.io/name=yakd-dashboard", Minutes(2)); err != nil {
 		t.Fatalf("failed waiting for YAKD - Kubernetes Dashboard pod: %v", err)
+	}
+
+	if rr, err := Run(t, exec.CommandContext(ctx, Target(), "-p", profile, "addons", "disable", "yakd", "--alsologtostderr", "-v=1")); err != nil {
+		t.Errorf("failed to disable yakd addon: args %q: %v", rr.Command(), err)
 	}
 }

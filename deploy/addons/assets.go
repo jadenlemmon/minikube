@@ -115,10 +115,6 @@ var (
 	//go:embed gvisor/*.tmpl
 	GvisorAssets embed.FS
 
-	// HelmTillerAssets assets for helm-tiller addon
-	//go:embed helm-tiller/*.tmpl helm-tiller/*.yaml
-	HelmTillerAssets embed.FS
-
 	// IngressDNSAssets assets for ingress-dns addon
 	//go:embed ingress-dns/ingress-dns-pod.yaml.tmpl
 	IngressDNSAssets embed.FS
@@ -134,6 +130,10 @@ var (
 	// GcpAuthAssets assets for gcp-auth addon
 	//go:embed gcp-auth/*.tmpl gcp-auth/*.yaml
 	GcpAuthAssets embed.FS
+
+	// Volcano assets for volcano addon
+	//go:embed volcano/*.tmpl
+	VolcanoAssets embed.FS
 
 	// VolumeSnapshotsAssets assets for volumesnapshots addon
 	//go:embed volumesnapshots/*.tmpl volumesnapshots/*.yaml
