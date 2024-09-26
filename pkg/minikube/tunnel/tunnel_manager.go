@@ -128,6 +128,7 @@ func (mgr *Manager) cleanup(t controller) {
 
 // CleanupNotRunningTunnels cleans up tunnels that are not running
 func (mgr *Manager) CleanupNotRunningTunnels() error {
+	klog.V(1).Info("TESTsssss")
 	tunnels, err := mgr.registry.List()
 	if err != nil {
 		return fmt.Errorf("error listing tunnels from registry: %s", err)

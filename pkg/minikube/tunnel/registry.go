@@ -179,6 +179,7 @@ func (r *persistentRegistry) Remove(route *Route) (rerr error) {
 	return nil
 }
 func (r *persistentRegistry) List() ([]*ID, error) {
+	klog.Infof("Looking at path %s", r.path)
 	f, err := os.Open(r.path)
 	if err != nil {
 		if !os.IsNotExist(err) {
