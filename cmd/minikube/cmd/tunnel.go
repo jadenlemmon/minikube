@@ -24,11 +24,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/VividCortex/godaemon"
 	"github.com/juju/fslock"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
 	"k8s.io/klog/v2"
@@ -66,26 +66,26 @@ var tunnelCmd = &cobra.Command{
 		manager := tunnel.NewManager()
 		cname := ClusterFlagValue()
 		co := mustload.Healthy(cname)
+		tunnelLockPath := filepath.Join(localpath.Profile(cname), ".tunnel_lock")
 
 		if stopDaemon {
-			if err := stopTunnelDaemon(cname); err != nil {
+			if err := stopTunnelDaemon(tunnelLockPath); err != nil {
 				exit.Error(reason.SvcTunnelStop, "error stopping tunnel daemon", err)
 			}
+
+			out.Styled(style.Success, "Background tunnel process stopped")
 			return
 		}
 
 		if daemonMode {
-			// if err := checkIfLockExists(cname); err != nil {
-			// 	if err == fslock.ErrLocked {
-			// 		exit.Message(reason.SvcTunnelAlreadyRunning, "Another tunnel process is already running, terminate the existing instance to start a new one")
-			// 	} else {
-			// 		exit.Error(reason.SvcTunnelStart, "failed to acquire lock due to unexpected error", err)
-			// 	}
-			// }
-			mustLockOrExit(cname)
+			// Add & remove the lock to ensure it's not already locked before daemonizing
+			mustLockOrExit(tunnelLockPath)
 			cleanupLock()
 
-			godaemon.MakeDaemon(&godaemon.DaemonAttr{})
+			_, _, err := godaemon.MakeDaemon(&godaemon.DaemonAttr{})
+			if err != nil {
+				exit.Error(reason.SvcTunnelStart, "error starting tunnel daemon", err)
+			}
 		}
 
 		if driver.IsQEMU(co.Config.Driver) && pkgnetwork.IsBuiltinQEMU(co.Config.Network) {
@@ -103,7 +103,7 @@ var tunnelCmd = &cobra.Command{
 			}
 		}
 
-		mustLockOrExit(cname)
+		mustLockOrExit(tunnelLockPath)
 		defer cleanupLock()
 
 		// Tunnel uses the k8s clientset to query the API server for services in the LoadBalancerEmulator.
@@ -159,59 +159,20 @@ func cleanupLock() {
 	}
 }
 
-// func mustLockOrExit(profile string) {
-// 	tunnelLockPath := filepath.Join(localpath.Profile(profile), ".tunnel_lock")
-
-// 	lockHandle = fslock.New(tunnelLockPath)
-// 	err := lockHandle.TryLock()
-// 	if err == fslock.ErrLocked {
-// 		exit.Message(reason.SvcTunnelAlreadyRunning, "Another tunnel process is already running, terminate the existing instance to start a new one")
-// 	}
-// 	if err != nil {
-// 		exit.Error(reason.SvcTunnelStart, "failed to acquire lock due to unexpected error", err)
-// 	}
-// }
-
-func checkIfLockExists(profile string) error {
-	tunnelLockPath := filepath.Join(localpath.Profile(profile), ".tunnel_lock")
-
-	lockHandle = fslock.New(tunnelLockPath)
-
-	if err := lockHandle.TryLock(); err != nil {
-		return err
-	}
-
-	if err := lockHandle.Unlock(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func mustLockOrExit(profile string) {
-	tunnelLockPath := filepath.Join(localpath.Profile(profile), ".tunnel_lock")
-
+func mustLockOrExit(tunnelLockPath string) {
 	lockHandle = fslock.New(tunnelLockPath)
 
 	err := lockHandle.TryLock()
 	if err == fslock.ErrLocked {
-		// Try to read the PID from the lock file
-		pidBytes, readErr := os.ReadFile(tunnelLockPath)
-		if readErr == nil {
-			pid := strings.TrimSpace(string(pidBytes))
-			exit.Message(reason.SvcTunnelAlreadyRunning, fmt.Sprintf("Another tunnel process (PID: %s) is already running, terminate the existing instance to start a new one", pid))
-		} else {
-			exit.Message(reason.SvcTunnelAlreadyRunning, "Another tunnel process is already running, terminate the existing instance to start a new one")
-		}
+		exit.Message(reason.SvcTunnelAlreadyRunning, "Another tunnel process is already running, terminate the existing instance to start a new one")
 	}
 	if err != nil {
 		exit.Error(reason.SvcTunnelStart, "failed to acquire lock due to unexpected error", err)
 	}
 
-	// If we successfully acquired the lock, write our PID to the lock file
-	pid := []byte(fmt.Sprintf("%d", os.Getpid()))
-	if writeErr := os.WriteFile(tunnelLockPath, pid, 0644); writeErr != nil {
-		klog.Warningf("Failed to write PID to lock file: %v", writeErr)
+	// Write the PID to the lock file to provide the PID when stopping the tunnel
+	if err := os.WriteFile(tunnelLockPath, []byte(fmt.Sprintf("%v", os.Getpid())), 0600); err != nil {
+		exit.Error(reason.SvcTunnelStart, "failed to write PID to lock file", err)
 	}
 }
 
@@ -222,30 +183,27 @@ func outputTunnelStarted() {
 	out.Ln("")
 }
 
-func stopTunnelDaemon(profile string) error {
-	tunnelLockPath := filepath.Join(localpath.Profile(profile), ".tunnel_lock")
-
+func stopTunnelDaemon(tunnelLockPath string) error {
 	pidBytes, err := os.ReadFile(tunnelLockPath)
 	if err != nil {
-		return fmt.Errorf("error reading tunnel PID file: %v", err)
+		return errors.Wrap(err, "error reading tunnel lock file")
 	}
 
 	pid, err := strconv.Atoi(string(pidBytes))
 	if err != nil {
-		return fmt.Errorf("error parsing tunnel PID: %v", err)
+		return errors.Wrap(err, "error converting PID to int")
 	}
 
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return fmt.Errorf("error finding tunnel process: %v", err)
+		return errors.Wrap(err, "error finding background tunnel process")
 	}
 
 	err = process.Signal(syscall.SIGTERM)
 	if err != nil {
-		return fmt.Errorf("error stopping tunnel process: %v", err)
+		return errors.Wrap(err, "error sending SIGTERM to background tunnel process")
 	}
 
-	fmt.Println("Tunnel daemon stopped successfully")
 	return nil
 }
 
@@ -253,5 +211,5 @@ func init() {
 	tunnelCmd.Flags().BoolVarP(&cleanup, "cleanup", "c", true, "call with cleanup=true to remove old tunnels")
 	tunnelCmd.Flags().StringVar(&bindAddress, "bind-address", "", "set tunnel bind address, empty or '*' indicates the tunnel should be available for all interfaces")
 	tunnelCmd.Flags().BoolVar(&daemonMode, "daemon", false, "run tunnel in the background")
-	tunnelCmd.Flags().BoolVar(&stopDaemon, "stop", false, "stop the background tunnel process")
+	tunnelCmd.Flags().BoolVar(&stopDaemon, "stop-daemon", false, "stop the background tunnel process")
 }
